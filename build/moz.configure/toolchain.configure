@@ -2007,6 +2007,9 @@ def select_linker_tmpl(host_or_target):
             if retcode == 1 and "Logging ld64 options" in stderr:
                 kind = "ld64"
 
+            elif retcode == 1 and "unknown options: --version" in stderr and target.kernel == "Darwin":
+                kind = "ld64"
+
             elif retcode != 0:
                 return None
 
