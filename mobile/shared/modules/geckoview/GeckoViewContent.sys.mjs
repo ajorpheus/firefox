@@ -14,6 +14,7 @@ export class GeckoViewContent extends GeckoViewModule {
       "GeckoView:HasCookieBannerRuleForBrowsingContextTree",
       "GeckoView:RestoreState",
       "GeckoView:ContainsFormData",
+      "GeckoView:GetFocusedInputMetrics",
       "GeckoView:ProcessBackPressed",
       "GeckoView:ScrollBy",
       "GeckoView:ScrollTo",
@@ -279,6 +280,9 @@ export class GeckoViewContent extends GeckoViewModule {
       case "GeckoView:ContainsFormData":
         this._containsFormData(aCallback);
         break;
+      case "GeckoView:GetFocusedInputMetrics":
+        this._getFocusedInputMetrics(aCallback);
+        break;
       case "GeckoView:GetWebCompatInfo":
         this._getWebCompatInfo(aCallback);
         break;
@@ -465,6 +469,18 @@ export class GeckoViewContent extends GeckoViewModule {
 
   async _containsFormData(aCallback) {
     aCallback.onSuccess(await this.actor.containsFormData());
+  }
+
+  async _getFocusedInputMetrics(aCallback) {
+    try {
+      const actor =
+        Services.focus.focusedContentBrowsingContext?.currentWindowGlobal?.getActor(
+          "GeckoViewContent"
+        );
+      aCallback.onSuccess(actor ? await actor.sendQuery("GetFocusedInputMetrics") : null);
+    } catch (error) {
+      aCallback.onError(`Cannot get focused input metrics, error: ${error}`);
+    }
   }
 
   async _hasCookieBannerRuleForBrowsingContextTree(aCallback) {

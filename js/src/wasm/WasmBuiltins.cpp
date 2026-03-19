@@ -2247,8 +2247,10 @@ bool wasm::EnsureBuiltinThunksInitialized(
   }
 
   masm.executableCopy(thunks->codeBase);
-  memset(thunks->codeBase + masm.bytesNeeded(), 0,
-         allocSize - masm.bytesNeeded());
+    uint8_t* writableCodeBase = WritableJitAllocationFromExecutable(
+        thunks->codeBase, thunks->codeSize);
+    memset(writableCodeBase + masm.bytesNeeded(), 0,
+      allocSize - masm.bytesNeeded());
 
   masm.processCodeLabels(thunks->codeBase);
   PatchDebugSymbolicAccesses(thunks->codeBase, masm);

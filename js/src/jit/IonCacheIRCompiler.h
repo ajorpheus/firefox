@@ -59,6 +59,7 @@ class MOZ_RAII IonCacheIRCompiler : public CacheIRCompiler {
   const CacheIRWriter& writer_;
   IonIC* ic_;
   IonScript* ionScript_;
+  IonICStub* currentStub_;
 
   Vector<CodeOffset, 4, SystemAllocPolicy> nextCodeOffsets_;
   mozilla::Maybe<LiveRegisterSet> liveRegs_;
@@ -98,6 +99,7 @@ class MOZ_RAII IonCacheIRCompiler : public CacheIRCompiler {
                                 StringCharOutOfBounds outOfBounds);
 
   void pushStubCodePointer();
+  void pushStubAndStubCodePointer();
 
   CACHE_IR_COMPILER_UNSHARED_GENERATED
 };

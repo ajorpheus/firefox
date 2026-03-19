@@ -24,6 +24,8 @@ class NativeLayerRootRemoteMacParent final : public NativeLayerRemoteParent {
   explicit NativeLayerRootRemoteMacParent(
       RefPtr<NativeLayerRootCA> aRealNativeLayerRoot);
 
+  void Shutdown();
+
   mozilla::ipc::IPCResult RecvCommitNativeLayerCommands(
       nsTArray<NativeLayerCommand>&& aCommands) override;
 

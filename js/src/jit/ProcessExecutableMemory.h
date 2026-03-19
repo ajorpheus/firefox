@@ -9,16 +9,16 @@
 
 #include "util/Poison.h"
 
-#ifdef XP_IOS
-#  include <BrowserEngineCore/BEMemory.h>
-#endif
-
 namespace js {
 namespace jit {
 
 // Limit on the number of bytes of executable memory to prevent JIT spraying
 // attacks.
-#if JS_BITS_PER_WORD == 32
+#if defined(XP_IOS)
+// REYNARD: Let the iOS extension children reserve this address space eagerly during
+// JIT startup
+static const size_t MaxCodeBytesPerProcess = 256 * 1024 * 1024;
+#elif JS_BITS_PER_WORD == 32
 static const size_t MaxCodeBytesPerProcess = 140 * 1024 * 1024;
 #else
 // This is the largest number which satisfies various alignment static
@@ -79,6 +79,21 @@ enum class MustFlushICache { No, Yes };
                                           ProtectionSetting protection,
                                           MustFlushICache flushICache);
 
+[[nodiscard]] extern void* WritableJitAllocationFromExecutable(void* start,
+                                                               size_t size);
+
+template <typename T>
+[[nodiscard]] inline T* WritableJitAllocationFromExecutable(T* start,
+                                                            size_t size) {
+  return static_cast<T*>(
+      WritableJitAllocationFromExecutable(static_cast<void*>(start), size));
+}
+
+template <typename T>
+[[nodiscard]] inline T* WritableJitAllocationFromExecutable(T* start) {
+  return WritableJitAllocationFromExecutable(start, sizeof(T));
+}
+
 // Functions called at process start-up/shutdown to initialize/release the
 // executable memory region.
 [[nodiscard]] extern bool InitProcessExecutableMemory();
@@ -125,22 +140,14 @@ class MOZ_RAII AutoMarkJitCodeWritableForThread {
 
  public:
   MOZ_ALWAYS_INLINE_EVEN_DEBUG AutoMarkJitCodeWritableForThread() {
-#if defined(JS_USE_APPLE_FAST_WX)
-#  if defined(XP_IOS)
-    be_memory_inline_jit_restrict_rwx_to_rw_with_witness();
-#  else
+#if defined(JS_USE_APPLE_FAST_WX) && !defined(XP_IOS)
     markExecutable(false);
-#  endif
 #endif
     checkConstructor();
   }
   MOZ_ALWAYS_INLINE_EVEN_DEBUG ~AutoMarkJitCodeWritableForThread() {
-#if defined(JS_USE_APPLE_FAST_WX)
-#  if defined(XP_IOS)
-    be_memory_inline_jit_restrict_rwx_to_rx_with_witness();
-#  else
+#if defined(JS_USE_APPLE_FAST_WX) && !defined(XP_IOS)
     markExecutable(true);
-#  endif
 #endif
     checkDestructor();
   }

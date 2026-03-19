@@ -53,6 +53,7 @@ IonCacheIRCompiler::IonCacheIRCompiler(JSContext* cx, TempAllocator& alloc,
       writer_(writer),
       ic_(ic),
       ionScript_(ionScript),
+      currentStub_(nullptr),
       savedLiveRegs_(false),
       localTracingSlots_(0),
       perfSpewer_(ic->script(), ic->pc()) {
@@ -80,6 +81,14 @@ void IonCacheIRCompiler::callVM(MacroAssembler& masm) {
 
 void IonCacheIRCompiler::pushStubCodePointer() {
   stubJitCodeOffset_.emplace(masm.PushWithPatch(ImmPtr((void*)-1)));
+}
+
+void IonCacheIRCompiler::pushStubAndStubCodePointer() {
+  MOZ_ASSERT(currentStub_);
+  // REYNARD: Only IonICCallFrameLayout carries the active IonICStub*.
+  // OOL exit-frame layouts still expect a single JitCode* marker word.
+  masm.Push(ImmPtr(currentStub_));
+  pushStubCodePointer();
 }
 
 // AutoSaveLiveRegisters must be used when we make a call that can GC. The
@@ -266,7 +275,7 @@ static void* GetReturnAddressToIonCode(JSContext* cx) {
 void IonCacheIRCompiler::enterStubFrame(MacroAssembler& masm,
                                         const AutoSaveLiveRegisters&) {
   MOZ_ASSERT(!enteredStubFrame_);
-  pushStubCodePointer();
+  pushStubAndStubCodePointer();
   masm.Push(FrameDescriptor(FrameType::IonJS));
   masm.Push(ImmPtr(GetReturnAddressToIonCode(cx_)));
 
@@ -584,6 +593,7 @@ bool IonCacheIRCompiler::init() {
 
 JitCode* IonCacheIRCompiler::compile(IonICStub* stub) {
   AutoCreatedBy acb(masm, "IonCacheIRCompiler::compile");
+  currentStub_ = stub;
 
   masm.setFramePushed(ionScript_->frameSize());
   if (cx_->runtime()->geckoProfiler().enabled()) {

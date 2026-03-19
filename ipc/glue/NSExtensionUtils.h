@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef mozilla_ipc_ExtensionKitUtils_h
-#define mozilla_ipc_ExtensionKitUtils_h
+#ifndef mozilla_ipc_NSExtensionUtils_h
+#define mozilla_ipc_NSExtensionUtils_h
 
 #include <functional>
 #include <xpc/xpc.h>
@@ -19,29 +19,19 @@ namespace mozilla::ipc {
 
 class BEProcessCapabilityGrantDeleter {
  public:
-  void operator()(void* aGrant) const;
+  void operator()(void* _Nullable aGrant) const;
 };
 
 using UniqueBEProcessCapabilityGrant =
     mozilla::UniquePtr<void, BEProcessCapabilityGrantDeleter>;
 
-class ExtensionKitProcess {
+class NSExtensionProcess {
  public:
-  enum class Kind {
-    WebContent,
-    Networking,
-    Rendering,
-  };
-
   // Called to start the process. The `aCompletion` function may be executed on
   // a background libdispatch thread.
   static void StartProcess(
-      Kind aKind,
-      const std::function<void(Result<ExtensionKitProcess, LaunchError>&&)>&
+      const std::function<void(Result<NSExtensionProcess, LaunchError>&&)>&
           aCompletion);
-
-  // Get the kind of process being started.
-  Kind GetKind() const { return mKind; }
 
   // Make an xpc_connection_t to this process. If an error is encountered,
   // `aError` will be populated with the error.
@@ -57,33 +47,27 @@ class ExtensionKitProcess {
   void Invalidate();
 
   // Explicit copy constructors
-  ExtensionKitProcess(const ExtensionKitProcess&);
-  ExtensionKitProcess& operator=(const ExtensionKitProcess&);
+  NSExtensionProcess(const NSExtensionProcess&);
+  NSExtensionProcess& operator=(const NSExtensionProcess&);
 
   // Release the object when completed.
-  ~ExtensionKitProcess();
+  ~NSExtensionProcess();
 
  private:
-  ExtensionKitProcess(Kind aKind, void* aProcessObject)
-      : mKind(aKind), mProcessObject(aProcessObject) {}
-
-  // Type tag for `mProcessObject`.
-  Kind mKind;
-
-  // This is one of `BEWebContentProcess`, `BENetworkingProcess` or
-  // `BERenderingProcess`. It has been type erased to be usable from C++ code.
-  void* mProcessObject;
+  NSExtensionProcess(void* _Nullable aProcessObject)
+      : mProcessObject(aProcessObject) {}
+  void* _Nullable mProcessObject;
 };
 
-enum class ExtensionKitSandboxRevision {
+enum class NSExtensionSandboxRevision {
   // RestrictedSandboxRevision.revision1
   Revision1,
 };
 
-// Call `applyRestrictedSandbox` on the current ExtensionKit process, if it
+// Call `applyRestrictedSandbox` on the current NSExtension process, if it
 // supports the given sandbox revision.
-void LockdownExtensionKitProcess(ExtensionKitSandboxRevision aRevision);
+void LockdownNSExtensionProcess(NSExtensionSandboxRevision aRevision);
 
 }  // namespace mozilla::ipc
 
-#endif  // mozilla_ipc_ExtensionKitUtils_h
+#endif  // mozilla_ipc_NSExtensionUtils_h

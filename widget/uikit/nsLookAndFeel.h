@@ -13,6 +13,8 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   nsLookAndFeel();
   virtual ~nsLookAndFeel();
 
+  static void SetSystemUsesDarkTheme(bool aUseDarkTheme);
+
   void NativeInit() final;
   void RefreshImpl() override;
   nsresult NativeGetInt(IntID aID, int32_t& aResult) override;
@@ -28,8 +30,6 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   static bool UseOverlayScrollbars() { return true; }
 
  private:
-  nscolor mColorDarkText;
-
   bool mInitialized;
 
   void EnsureInit();

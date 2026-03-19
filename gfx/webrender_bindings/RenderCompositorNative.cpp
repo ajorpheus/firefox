@@ -116,7 +116,6 @@ inline layers::WebRenderCompositor RenderCompositorNative::CompositorType()
     return layers::WebRenderCompositor::WAYLAND;
 #endif
   }
-  return layers::WebRenderCompositor::DRAW;
 }
 
 LayoutDeviceIntSize RenderCompositorNative::GetBufferSize() {

@@ -18,6 +18,7 @@
 #  define MOZ_BEGIN_EXTERN_C
 #  define MOZ_END_EXTERN_C
 #endif
+#include <stdbool.h>
 #include <xpc/xpc.h>
 
 @protocol SwiftGeckoViewRuntime;
@@ -31,6 +32,8 @@ MOZ_EXPORT int MainProcessInit(int aArgc, char** aArgv,
 MOZ_EXPORT void ChildProcessInit(xpc_connection_t aXpcConnection,
                                  id<GeckoProcessExtension> aProcess,
                                  id<SwiftGeckoViewRuntime> aRuntime);
+
+MOZ_EXPORT void ReportChildProcessJITEnabled(int32_t aPid, bool aEnabled);
 
 MOZ_END_EXTERN_C
 

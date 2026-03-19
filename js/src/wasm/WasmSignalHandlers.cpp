@@ -34,12 +34,33 @@
 #elif defined(XP_DARWIN)
 #  include <mach/exc.h>
 #  include <mach/mach.h>
+#  ifdef XP_IOS
+#    include <unistd.h>
+#  endif
 #elif !defined(__wasi__)
 #  include <signal.h>
 #endif
 
 using namespace js;
 using namespace js::wasm;
+
+#ifdef XP_IOS
+static void WasmSignalFailureDebug(const char* aStage,
+          kern_return_t aCode = KERN_SUCCESS) {
+  if (aCode == KERN_SUCCESS) {
+    fprintf(stderr,
+      "REYNARD_DEBUG: wasm signal handler stage failed: pid=%d, %s\n",
+      getpid(), aStage);
+    return;
+  }
+
+  const char* error = mach_error_string(aCode);
+  fprintf(stderr,
+    "REYNARD_DEBUG: wasm signal handler stage failed: pid=%d, %s (%d%s%s)\n",
+    getpid(), aStage, static_cast<int>(aCode), error ? ", " : "",
+    error ? error : "");
+}
+#endif
 
 #if !defined(JS_CODEGEN_NONE)
 
@@ -929,11 +950,17 @@ static bool EnsureLazyProcessSignalHandlers() {
   kret = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
                             &sMachDebugPort);
   if (kret != KERN_SUCCESS) {
+#    ifdef XP_IOS
+    WasmSignalFailureDebug("mach_port_allocate", kret);
+#    endif
     return false;
   }
   kret = mach_port_insert_right(mach_task_self(), sMachDebugPort,
                                 sMachDebugPort, MACH_MSG_TYPE_MAKE_SEND);
   if (kret != KERN_SUCCESS) {
+#    ifdef XP_IOS
+    WasmSignalFailureDebug("mach_port_insert_right", kret);
+#    endif
     return false;
   }
 
@@ -942,6 +969,9 @@ static bool EnsureLazyProcessSignalHandlers() {
   // immediately detach on successful start.
   Thread handlerThread;
   if (!handlerThread.init(MachExceptionHandlerThread)) {
+#    ifdef XP_IOS
+    WasmSignalFailureDebug("MachExceptionHandlerThread init");
+#    endif
     return false;
   }
   handlerThread.detach();
@@ -967,6 +997,9 @@ bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
     auto eagerInstallState = sEagerInstallState.lock();
     MOZ_RELEASE_ASSERT(eagerInstallState->tried);
     if (!eagerInstallState->success) {
+#  ifdef XP_IOS
+      WasmSignalFailureDebug("eager signal handler install");
+#  endif
       return false;
     }
   }
@@ -991,6 +1024,9 @@ bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
       THREAD_STATE_NONE);
   mach_port_deallocate(mach_task_self(), thisThread);
   if (kret != KERN_SUCCESS) {
+#  ifdef XP_IOS
+    WasmSignalFailureDebug("thread_set_exception_ports", kret);
+#  endif
     return false;
   }
 #  endif

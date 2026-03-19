@@ -3,6 +3,7 @@ uprofiler_get
 #ifdef XP_IOS
 MainProcessInit
 ChildProcessInit
+ReportChildProcessJITEnabled
 GeckoViewOpenWindow
 #endif
 #ifdef ANDROID

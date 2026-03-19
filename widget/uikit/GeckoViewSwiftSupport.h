@@ -28,6 +28,8 @@
 @protocol SwiftGeckoViewRuntime <NSObject>
 - (id<SwiftEventDispatcher>)runtimeDispatcher;
 - (id<SwiftEventDispatcher>)dispatcherByName:(const char*)name;
+@optional
+- (void)childProcessDidStartWithPID:(int32_t)pid processType:(NSString*)processType;
 @end
 
 @protocol GeckoProcessExtension <NSObject>

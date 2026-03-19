@@ -15,9 +15,25 @@ NativeLayerRootRemoteMacParent::NativeLayerRootRemoteMacParent(
   MOZ_ASSERT(mRealNativeLayerRoot);
 }
 
+void NativeLayerRootRemoteMacParent::Shutdown() {
+  // REYNARD: Clear the remote layer state and release the root before the
+  // UIKit view backing it is torn down.
+  if (mRealNativeLayerRoot) {
+    mRealNativeLayerRoot->SetLayers({});
+  }
+
+  mSnapshotter = nullptr;
+  mKnownLayers.Clear();
+  mRealNativeLayerRoot = nullptr;
+}
+
 mozilla::ipc::IPCResult
 NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
     nsTArray<NativeLayerCommand>&& aCommands) {
+  if (!mRealNativeLayerRoot) {
+    return IPC_OK();
+  }
+
   for (auto& command : aCommands) {
     switch (command.type()) {
       case NativeLayerCommand::TCommandCreateLayer: {
@@ -88,6 +104,10 @@ NativeLayerRootRemoteMacParent::RecvCommitNativeLayerCommands(
 
 mozilla::ipc::IPCResult NativeLayerRootRemoteMacParent::RecvRequestReadback(
     IntSize aSize, Shmem* const aPixels) {
+  if (!mRealNativeLayerRoot) {
+    return IPC_FAIL(this, "Native layer root has been shut down.");
+  }
+
   if (!xpc::IsInAutomation()) {
     return IPC_FAIL(this, "Should only be called from automation.");
   }

@@ -4889,7 +4889,9 @@ void CodeGenerator::visitMegamorphicLoadSlotPermissive(
   masm.movePropertyKey(lir->mir()->name(), temp1);
   pushArg(temp2);
   pushArg(temp1);
-  pushArg(obj);
+  // REYNARD: emitMegamorphicCacheLookup can clobber |obj| on miss/getter
+  // paths. Pass the preserved receiver to VM fallback.
+  pushArg(temp3);
 
   using Fn = bool (*)(JSContext*, HandleObject, HandleId,
                       MegamorphicCacheEntry*, MutableHandleValue);
@@ -4983,7 +4985,12 @@ void CodeGenerator::visitMegamorphicLoadSlotByValuePermissive(
 
   pushArg(temp2);
   pushArg(idVal);
+#ifndef JS_CODEGEN_X86
+  // REYNARD: Same as visitMegamorphicLoadSlotPermissive above.
+  pushArg(temp3);
+#else
   pushArg(obj);
+#endif
 
   using Fn = bool (*)(JSContext*, HandleObject, HandleValue,
                       MegamorphicCacheEntry*, MutableHandleValue);

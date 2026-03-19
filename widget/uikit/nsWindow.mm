@@ -27,6 +27,7 @@
 
 #include "nsWidgetsCID.h"
 #include "nsGfxCIID.h"
+#include "nsLookAndFeel.h"
 
 #include "gfxPlatform.h"
 #include "gfxQuartzSurface.h"
@@ -45,9 +46,18 @@
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/dom/MouseEventBinding.h"
+#include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/WindowContext.h"
 #include "mozilla/gfx/Logging.h"
+#include "mozilla/gfx/GPUProcessManager.h"
+#include "mozilla/Monitor.h"
 #include "mozilla/widget/GeckoViewSupport.h"
+#include "mozilla/widget/UIKitCompositorWidget.h"
 #include "mozilla/layers/NativeLayerCA.h"
+#include "mozilla/layers/CompositorThread.h"
+#include "mozilla/layers/NativeLayerRootRemoteMacParent.h"
+#include "mozilla/layers/PNativeLayerRemote.h"
+#include "mozilla/widget/PlatformWidgetTypes.h"
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/MUIRootAccessibleProtocol.h"
 #endif
@@ -58,10 +68,6 @@ using namespace mozilla::layers;
 using namespace mozilla::widget;
 using mozilla::dom::Touch;
 using mozilla::widget::UIKitUtils;
-
-#define ALOG(args...)    \
-  fprintf(stderr, args); \
-  fprintf(stderr, "\n")
 
 static LayoutDeviceIntPoint UIKitPointsToDevPixels(CGPoint aPoint,
                                                    CGFloat aBackingScale) {
@@ -128,6 +134,7 @@ class nsAutoRetainUIKitObject {
 - (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event;
 // Reacts to the view being resized.
 - (void)layoutSubviews;
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection;
 
 - (void)markLayerForDisplay;
 - (CALayer*)rootCALayer;
@@ -162,6 +169,8 @@ class nsAutoRetainUIKitObject {
   if ((self = [super initWithFrame:inFrame])) {
     mGeckoChild = inChild;
 
+    self.backgroundColor = [UIColor systemBackgroundColor];
+
     mRootCALayer = [[CALayer layer] retain];
     mRootCALayer.position = CGPointZero;
     mRootCALayer.bounds = CGRectZero;
@@ -169,8 +178,6 @@ class nsAutoRetainUIKitObject {
     mRootCALayer.contentsGravity = kCAGravityTopLeft;
     [[self layer] addSublayer:mRootCALayer];
   }
-  ALOG("[ChildView[%p] initWithFrame:] (mGeckoChild = %p)", (void*)self,
-       (void*)mGeckoChild);
   self.opaque = YES;
   self.alpha = 1.0;
 
@@ -200,6 +207,21 @@ class nsAutoRetainUIKitObject {
   return self;
 }
 
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+
+  self.backgroundColor = [UIColor systemBackgroundColor];
+
+  if (previousTraitCollection &&
+      self.traitCollection.userInterfaceStyle ==
+          previousTraitCollection.userInterfaceStyle) {
+    return;
+  }
+
+  nsLookAndFeel::SetSystemUsesDarkTheme(
+      self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark);
+}
+
 - (void)widgetDestroyed {
   mGeckoChild = nullptr;
   [mTouches release];
@@ -211,8 +233,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)activateWindow:(NSNotification*)notification {
-  ALOG("[[ChildView[%p] activateWindow]", (void*)self);
-
   if (!mGeckoChild) {
     return;
   }
@@ -223,8 +243,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)deactivateWindow:(NSNotification*)notification {
-  ALOG("[[ChildView[%p] deactivateWindow]", (void*)self);
-
   if (!mGeckoChild) {
     return;
   }
@@ -252,7 +270,6 @@ class nsAutoRetainUIKitObject {
 
 - (void)handleTap:(UITapGestureRecognizer*)sender {
   if (sender.state == UIGestureRecognizerStateEnded) {
-    ALOG("[ChildView[%p] handleTap]", self);
     LayoutDeviceIntPoint lp = UIKitPointsToDevPixels(
         [sender locationInView:self], [self contentScaleFactor]);
     [self sendMouseEvent:eMouseMove point:lp widget:mGeckoChild];
@@ -289,7 +306,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-  ALOG("[ChildView[%p] touchesBegan", self);
   if (!mGeckoChild) return;
 
   for (UITouch* touch : touches) {
@@ -302,7 +318,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-  ALOG("[ChildView[%p] touchesCancelled", self);
   [self sendTouchEvent:eTouchCancel touches:touches widget:mGeckoChild];
   for (UITouch* touch : touches) {
     [mTouches removeObjectForKey:touch];
@@ -313,7 +328,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-  ALOG("[ChildView[%p] touchesEnded", self);
   if (!mGeckoChild) return;
 
   [self sendTouchEvent:eTouchEnd touches:touches widget:mGeckoChild];
@@ -326,7 +340,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-  ALOG("[ChildView[%p] touchesMoved", self);
   if (!mGeckoChild) return;
 
   [self sendTouchEvent:eTouchMove
@@ -335,7 +348,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)layoutSubviews {
-  ALOG("[ChildView[%p] layoutSubviews", self);
   if (!mGeckoChild ||
       mGeckoChild->GetWindowType() != nsIWidget::WindowType::TopLevel) {
     return;
@@ -406,7 +418,6 @@ class nsAutoRetainUIKitObject {
 }
 
 - (void)drawUsingOpenGL {
-  ALOG("drawUsingOpenGL");
   AUTO_PROFILER_LABEL("ChildView::drawUsingOpenGL", OTHER);
 
   if (!mGeckoChild->IsVisible()) return;
@@ -746,8 +757,62 @@ nsWindow::nsWindow()
       mParent(nullptr) {}
 
 nsWindow::~nsWindow() {
+  CloseNativeLayerRemoteParent(true);
+  DestroyNativeLayerRoot();
+
   [mNativeView widgetDestroyed];  // Safe if mNativeView is nil.
   TearDownView();                 // Safe if called twice.
+}
+
+void nsWindow::CloseNativeLayerRemoteParent(bool aWaitUntilClosed) {
+  // REYNARD: Drop the remote actor's layer-root reference before we destroy
+  // the UIKit view so the CA root cannot outlive its backing layer tree.
+  RefPtr<NativeLayerRootRemoteMacParent> actor =
+      std::move(mNativeLayerRootRemoteMacParent);
+  if (!actor) {
+    return;
+  }
+
+  MOZ_ASSERT(CompositorThread());
+
+  if (!aWaitUntilClosed) {
+    CompositorThread()->Dispatch(NS_NewRunnableFunction(
+        "nsWindow::CloseNativeLayerRemoteParent", [actor = std::move(actor)]() {
+          actor->Shutdown();
+          actor->Close();
+        }));
+    return;
+  }
+
+  Monitor monitor("nsWindow::CloseNativeLayerRemoteParent");
+  bool didClose = false;
+
+  CompositorThread()->Dispatch(
+      NS_NewRunnableFunction("nsWindow::CloseNativeLayerRemoteParentAndWait",
+                             [actor = std::move(actor), &monitor, &didClose]() {
+                               actor->Shutdown();
+                               actor->Close();
+                               MonitorAutoLock lock(monitor);
+                               didClose = true;
+                               lock.Notify();
+                             }));
+
+  MonitorAutoLock lock(monitor);
+  while (!didClose) {
+    lock.Wait();
+  }
+}
+
+void nsWindow::DestroyNativeLayerRoot() {
+  // REYNARD: Release the retained CA root while the ChildView still owns a
+  // valid backing layer, so the root destructor does not run after UIKit
+  // tears that layer tree down.
+  if (!mNativeLayerRoot) {
+    return;
+  }
+
+  mNativeLayerRoot->SetLayers({});
+  mNativeLayerRoot = nullptr;
 }
 
 void nsWindow::TearDownView() {
@@ -771,14 +836,8 @@ bool nsWindow::IsTopLevel() {
 
 nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
                           const widget::InitData& aInitData) {
-  ALOG("nsWindow[%p]::Create %p [%d %d %d %d]", (void*)this, (void*)aParent,
-       aRect.x, aRect.y, aRect.width, aRect.height);
   nsWindow* parent = (nsWindow*)aParent;
-
   mBounds = aRect;
-
-  ALOG("nsWindow[%p]::Create bounds: %d %d %d %d", (void*)this, mBounds.x,
-       mBounds.y, mBounds.width, mBounds.height);
 
   // Set defaults which can be overriden from aInitData in BaseCreate
   mWindowType = WindowType::TopLevel;
@@ -827,6 +886,8 @@ void nsWindow::Destroy() {
   }
   mTextInputHandler = nullptr;
 
+  CloseNativeLayerRemoteParent(true);
+
   [mNativeView widgetDestroyed];
 
   nsCOMPtr<nsIWidget> kungFuDeathGrip(this);
@@ -834,6 +895,8 @@ void nsWindow::Destroy() {
   nsIWidget::Destroy();
 
   // ReportDestroyEvent();
+
+  DestroyNativeLayerRoot();
 
   TearDownView();
 
@@ -852,7 +915,6 @@ void nsWindow::Show(bool aState) {
     mVisible = aState;
   }
 }
-
 void nsWindow::Move(const DesktopPoint& aPoint) {
   if (!mNativeView || (mBounds.x == aPoint.x && mBounds.y == aPoint.y)) {
     return;
@@ -983,6 +1045,10 @@ void nsWindow::ReportSizeModeEvent(nsSizeMode aMode) {
 void nsWindow::ReportSizeEvent() {
   LayoutDeviceIntRect innerBounds = GetClientBounds();
 
+  if (mCompositorWidgetDelegate) {
+    mCompositorWidgetDelegate->NotifyClientSizeChanged(innerBounds.Size());
+  }
+
   if (mWidgetListener) {
     mWidgetListener->WindowResized(this, innerBounds.Size());
   }
@@ -1021,6 +1087,7 @@ void nsWindow::SetInputContext(const InputContext& aContext,
 
   const bool changingEnabledState =
       aContext.IsInputAttributeChanged(mInputContext);
+  const bool hadFirstResponder = [mNativeView isFirstResponder];
 
   mInputContext = aContext;
 
@@ -1029,9 +1096,25 @@ void nsWindow::SetInputContext(const InputContext& aContext,
     return;
   }
 
-  [mNativeView becomeFirstResponder];
+  // REYNARD: Only promote the UIKit host view to first responder for
+  // user-driven editable focus so page-load autofocus does not open the
+  // software keyboard automatically.
+  const bool focusFromPointerInput =
+      aAction.mCause == InputContextAction::CAUSE_MOUSE ||
+      aAction.mCause == InputContextAction::CAUSE_TOUCH ||
+      aAction.mCause ==
+          InputContextAction::CAUSE_UNKNOWN_DURING_NON_KEYBOARD_INPUT;
+  const bool shouldBecomeFirstResponder =
+      hadFirstResponder || aAction.UserMightRequestOpenVKB() ||
+      (aAction.mFocusChange == InputContextAction::GOT_FOCUS &&
+       focusFromPointerInput);
 
-  if (aAction.UserMightRequestOpenVKB() || changingEnabledState) {
+  if (shouldBecomeFirstResponder) {
+    [mNativeView becomeFirstResponder];
+  }
+
+  if ((aAction.UserMightRequestOpenVKB() || changingEnabledState) &&
+      (hadFirstResponder || shouldBecomeFirstResponder)) {
     // TODO(m_kato):
     // It is unnecessary to call reloadInputViews with changingEnabledState if
     // virtual keyboard is disappeared.
@@ -1049,6 +1132,25 @@ widget::InputContext nsWindow::GetInputContext() {
     return context;
   }
   return mInputContext;
+}
+
+void nsWindow::SetCompositorWidgetDelegate(
+    mozilla::widget::CompositorWidgetDelegate* aDelegate) {
+  if (aDelegate) {
+    mCompositorWidgetDelegate = aDelegate->AsPlatformSpecificDelegate();
+  } else {
+    mCompositorWidgetDelegate = nullptr;
+  }
+
+  if (mCompositorWidgetDelegate) {
+    auto clientSize = GetClientBounds().Size();
+    if (clientSize.IsEmpty()) {
+      clientSize = mBounds.Size();
+    }
+    if (!clientSize.IsEmpty()) {
+      mCompositorWidgetDelegate->NotifyClientSizeChanged(clientSize);
+    }
+  }
 }
 
 widget::TextEventDispatcherListener*
@@ -1120,6 +1222,85 @@ int32_t nsWindow::RoundsWidgetCoordinatesTo() {
 
 layers::NativeLayerRoot* nsWindow::GetNativeLayerRoot() {
   return mNativeLayerRoot;
+}
+
+void nsWindow::GetCompositorWidgetInitData(
+    mozilla::widget::CompositorWidgetInitData* aInitData) {
+  CloseNativeLayerRemoteParent(false);
+
+  auto* pm = mozilla::gfx::GPUProcessManager::Get();
+  mozilla::ipc::EndpointProcInfo gpuProcessInfo =
+      pm ? pm->GPUEndpointProcInfo()
+         : mozilla::ipc::EndpointProcInfo::Invalid();
+
+  mozilla::ipc::EndpointProcInfo childProcessInfo =
+      gpuProcessInfo != mozilla::ipc::EndpointProcInfo::Invalid()
+          ? gpuProcessInfo
+          : mozilla::ipc::EndpointProcInfo::Current();
+
+  mozilla::ipc::Endpoint<PNativeLayerRemoteParent> parentEndpoint;
+  mozilla::ipc::Endpoint<PNativeLayerRemoteChild> childEndpoint;
+  auto rv = PNativeLayerRemote::CreateEndpoints(
+      mozilla::ipc::EndpointProcInfo::Current(), childProcessInfo,
+      &parentEndpoint, &childEndpoint);
+  MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+  MOZ_RELEASE_ASSERT(parentEndpoint.IsValid());
+  MOZ_RELEASE_ASSERT(childEndpoint.IsValid());
+
+  RefPtr<NativeLayerRootRemoteMacParent> nativeLayerRemoteParent =
+      new NativeLayerRootRemoteMacParent(mNativeLayerRoot);
+
+  MOZ_ASSERT(CompositorThread());
+
+  Monitor monitor("nsWindow::GetCompositorWidgetInitData");
+  bool didBindParentEndpoint = false;
+
+  CompositorThread()->Dispatch(NS_NewRunnableFunction(
+      "nsWindow::GetCompositorWidgetInitData bind endpoint", [&]() {
+        MOZ_ALWAYS_TRUE(parentEndpoint.Bind(nativeLayerRemoteParent));
+        MonitorAutoLock lock(monitor);
+        didBindParentEndpoint = true;
+        lock.Notify();
+      }));
+
+  {
+    MonitorAutoLock lock(monitor);
+    while (!didBindParentEndpoint) {
+      lock.Wait();
+    }
+  }
+
+  auto clientSize = GetClientBounds().Size();
+  if (clientSize.IsEmpty()) {
+    clientSize = mBounds.Size();
+  }
+  if (clientSize.IsEmpty()) {
+    clientSize = LayoutDeviceIntSize(1, 1);
+  }
+  *aInitData = mozilla::widget::CocoaCompositorWidgetInitData(
+      clientSize, std::move(childEndpoint));
+
+  mNativeLayerRootRemoteMacParent = std::move(nativeLayerRemoteParent);
+}
+
+void nsWindow::DestroyCompositor() {
+  if (mNativeLayerRoot) {
+    mNativeLayerRoot->SetLayers({});
+  }
+
+  CloseNativeLayerRemoteParent(false);
+
+  nsIWidget::DestroyCompositor();
+}
+
+void nsWindow::NotifyCompositorSessionLost(
+    mozilla::layers::CompositorSession* aSession) {
+  const double kTriggerPaintDelayAfterCompositorSessionLoss = 0.4;
+  [mNativeView performSelector:@selector(markLayerForDisplay)
+                    withObject:nil
+                    afterDelay:kTriggerPaintDelayAfterCompositorSessionLoss];
+
+  nsIWidget::NotifyCompositorSessionLost(aSession);
 }
 
 void nsWindow::HandleMainThreadCATransaction() {
@@ -1276,6 +1457,7 @@ id<GeckoViewWindow> GeckoViewOpenWindow(NSString* aId,
 
   nsAutoCString url;
   nsresult rv = Preferences::GetCString("toolkit.defaultChromeURI", url);
+
   if (NS_FAILED(rv)) {
     url = "chrome://geckoview/content/geckoview.xhtml"_ns;
   }

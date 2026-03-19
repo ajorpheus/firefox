@@ -316,7 +316,7 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the W^X policy is enforced to mark JIT code pages as either
   // writable or executable but never both at the same time. On Apple Silicon
   // this must always be false because we use pthread_jit_write_protect_np.
-#ifdef JS_USE_APPLE_FAST_WX
+#if defined(JS_USE_APPLE_FAST_WX) && !defined(XP_IOS)
   SET_DEFAULT(writeProtectCode, false);
 #else
   SET_DEFAULT(writeProtectCode, true);
@@ -461,7 +461,7 @@ void DefaultJitOptions::resetNormalIonWarmUpThreshold() {
 }
 
 void DefaultJitOptions::maybeSetWriteProtectCode(bool val) {
-#ifdef JS_USE_APPLE_FAST_WX
+#if defined(JS_USE_APPLE_FAST_WX) && !defined(XP_IOS)
   // On Apple Silicon we always use pthread_jit_write_protect_np, or
   // be_memory_inline_jit_restrict_*.
   MOZ_ASSERT(!writeProtectCode);
